@@ -1370,12 +1370,30 @@
                 <div id="hostLobby" class="hidden">
                     <p style="color:#94a3b8">等待玩家连接...</p>
                     <p id="hostAddressDisplay" style="color:#38bdf8;font-weight:bold"></p>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0;text-align:left">
+                        <label style="display:block;color:#cbd5e1;font-size:13px">难度
+                            <select id="roomDifficultySelect" style="width:100%;margin-top:4px;padding:8px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0">
+                                <option value="easy">休闲</option>
+                                <option value="normal">标准</option>
+                                <option value="hard">高压</option>
+                            </select>
+                        </label>
+                        <label style="display:block;color:#cbd5e1;font-size:13px">AI 强度
+                            <select id="roomAiSelect" style="width:100%;margin-top:4px;padding:8px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0">
+                                <option value="light">轻量</option>
+                                <option value="normal">标准</option>
+                                <option value="dense">密集</option>
+                            </select>
+                        </label>
+                    </div>
                     <div id="playerList" style="margin:10px 0"></div>
                     <button id="startNetGameBtn" class="start">开始游戏</button>
                 </div>
                 <div id="clientLobby" class="hidden">
                     <p style="color:#94a3b8">已连接，等待主机开始...</p>
+                    <p id="roomSettingsDisplay" style="color:#38bdf8;font-weight:bold"></p>
                     <div id="clientPlayerList" style="margin:10px 0"></div>
+                    <button id="readyBtn" class="start">准备</button>
                 </div>
                 <p id="lobbyStatus" style="color:#f87171;min-height:1.2em"></p>
                 <button id="lobbyBackBtn" class="start secondary">返回</button>
@@ -1471,6 +1489,8 @@
         const PLAYER_SPAWN_SAFE_RADIUS = 1200;
         const DEBUG_STAGE_MASS = { mid: 800, late: 2200, giant: 5000 };
         const DEBUG_AI_MULTIPLIER = { light: 0.7, normal: 1, dense: 1.25 };
+        const ROOM_DIFFICULTY_LABELS = { easy: "休闲", normal: "标准", hard: "高压" };
+        const ROOM_AI_LABELS = { light: "轻量", normal: "标准", dense: "密集" };
         const AI_ARCHETYPE_ORDER = ["hunter", "scavenger", "guardian", "splitter", "virusKiter"];
         const AI_ARCHETYPES = {
             hunter: {
@@ -1826,10 +1846,14 @@
             connectBtn: document.getElementById("connectBtn"),
             hostLobby: document.getElementById("hostLobby"),
             hostAddressDisplay: document.getElementById("hostAddressDisplay"),
+            roomDifficultySelect: document.getElementById("roomDifficultySelect"),
+            roomAiSelect: document.getElementById("roomAiSelect"),
             playerList: document.getElementById("playerList"),
             startNetGameBtn: document.getElementById("startNetGameBtn"),
             clientLobby: document.getElementById("clientLobby"),
+            roomSettingsDisplay: document.getElementById("roomSettingsDisplay"),
             clientPlayerList: document.getElementById("clientPlayerList"),
+            readyBtn: document.getElementById("readyBtn"),
             lobbyStatus: document.getElementById("lobbyStatus"),
             lobbyBackBtn: document.getElementById("lobbyBackBtn"),
             controlHint: document.getElementById("controlHint"),
@@ -2310,6 +2334,7 @@
                 this.pausedAt = 0;
                 this.totalPausedMs = 0;
                 this.difficulty = DIFFICULTY.easy;
+                this.difficultyKey = "easy";
                 this.controlMode = "mouse";
                 this.cursors = null;
                 this.keys = null;
@@ -2462,13 +2487,24 @@
                 }
             }
 
-            startMatch(difficultyKey) {
-                this.matchState = "playing";
+            applyMatchSettings(settings = {}) {
+                const difficultyKey = DIFFICULTY[settings.difficulty] ? settings.difficulty : (this.difficultyKey || "easy");
+                const debugOptions = getDebugOptions();
+                const aiMode = settings.aiMode && DEBUG_AI_MULTIPLIER[settings.aiMode] ? settings.aiMode : debugOptions.aiMode;
                 this.difficulty = DIFFICULTY[difficultyKey] || DIFFICULTY.easy;
                 this.difficultyKey = DIFFICULTY[difficultyKey] ? difficultyKey : "easy";
+                this.debugOptions = {
+                    ...debugOptions,
+                    aiMode,
+                    aiMultiplier: DEBUG_AI_MULTIPLIER[aiMode] || debugOptions.aiMultiplier || 1
+                };
+            }
+
+            startMatch(difficultyKey, options = {}) {
+                this.matchState = "playing";
+                this.applyMatchSettings({ difficulty: difficultyKey, aiMode: options.aiMode });
                 this.renderMode = selectedMode; // "2d" or "3d"
                 this.controlMode = selectedControlMode === "keyboard" ? "keyboard" : "mouse";
-                this.debugOptions = getDebugOptions();
                 this.cells = [];
                 this.food = [];
                 this.viruses = [];
@@ -7112,16 +7148,38 @@
                 this.chaosZones = [];
                 this.virusSwarms = [];
                 this.cells = [];
+                this.renderMode = selectedMode;
+                this.controlMode = selectedControlMode === "keyboard" ? "keyboard" : "mouse";
                 this.activeSkin = SKIN_TYPES[selectedSkin] || SKIN_TYPES.default;
                 this.aiPlayers = new Map();
                 this.particles = [];
                 this.playerStates = new Map();
+                this.stats = this.createStats();
+                this.stats.startTime = Math.max(1, this.time.now);
+                this.lastHudUpdate = 0;
+                this.lastDebugUpdate = 0;
+                resetMessageState();
+                clearKillFeed();
+                if (dom.gameOverScreen) dom.gameOverScreen.classList.add("hidden");
+                if (dom.hud) dom.hud.classList.remove("crowded");
+                if (dom.debug) dom.debug.classList.toggle("hidden", !this.debugOptions.overlay);
+                if (dom.massProgress) dom.massProgress.classList.remove("hidden");
+                if (dom.stageIndicator) { dom.stageIndicator.classList.remove("hidden", "growth", "chase", "sprint"); dom.stageIndicator.textContent = "成长期"; dom.stageIndicator.classList.add("growth"); }
+                if (dom.minimapWrap) dom.minimapWrap.style.display = "";
                 this.graphics = this.add.graphics();
                 this.bgGraphics = this.add.graphics();
                 this.cameraTarget = this.add.zone(WORLD_SIZE / 2, WORLD_SIZE / 2, 10, 10);
                 this.cameras.main.setBounds(0, 0, WORLD_SIZE, WORLD_SIZE);
                 this.cameras.main.startFollow(this.cameraTarget, true, 0.15, 0.15);
                 this.cameras.main.setZoom(0.84);
+                if (this.renderMode === "3d") {
+                    if (threeDMode) { threeDMode.dispose(); threeDMode = null; }
+                    threeDMode = new ThreeDMode(this);
+                    threeDMode.show();
+                    dom.gameMount.style.display = "none";
+                } else {
+                    dom.gameMount.style.display = "";
+                }
                 this.handleHostMessages();
             }
 
@@ -8271,9 +8329,24 @@
         let lobbyWs = null;
         let lobbyPlayers = [];
         let lobbyClientId = null;
+        let lobbySettings = { difficulty: "normal", aiMode: "normal" };
+        let lobbyReady = false;
+        let lobbyStarted = false;
 
         function showLobbyStatus(msg) { if (dom.lobbyStatus) dom.lobbyStatus.textContent = msg; }
         function clearLobbyStatus() { if (dom.lobbyStatus) dom.lobbyStatus.textContent = ""; }
+
+        function normalizeRoomSettings(settings = {}) {
+            return {
+                difficulty: DIFFICULTY[settings.difficulty] ? settings.difficulty : "normal",
+                aiMode: DEBUG_AI_MULTIPLIER[settings.aiMode] ? settings.aiMode : "normal"
+            };
+        }
+
+        function formatRoomSettings(settings = lobbySettings) {
+            const safe = normalizeRoomSettings(settings);
+            return (ROOM_DIFFICULTY_LABELS[safe.difficulty] || "标准") + " / AI " + (ROOM_AI_LABELS[safe.aiMode] || "标准");
+        }
 
         function updatePlayerListUI(listEl, players) {
             if (!listEl) return;
@@ -8281,9 +8354,68 @@
                 const id = Number.isFinite(Number(p.id)) ? Math.max(1, Number(p.id)) : 1;
                 const color = PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length];
                 const hex = "#" + color.toString(16).padStart(6, "0");
-                const role = p.role === "host" ? " (主机)" : "";
-                return '<div style="padding:4px 0;color:' + hex + '">' + escapeHtml(p.name || "玩家") + role + '</div>';
+                const isHost = p.role === "host";
+                const statusColor = isHost ? "#38bdf8" : (p.ready ? "#4ade80" : "#facc15");
+                const statusText = isHost ? "房主" : (p.ready ? "已准备" : "未准备");
+                return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 0;color:' + hex + '">'
+                    + '<span>' + escapeHtml(p.name || "玩家") + '</span>'
+                    + '<span style="color:' + statusColor + ';font-size:12px">' + statusText + '</span>'
+                    + '</div>';
             }).join("");
+        }
+
+        function getWaitingPlayers() {
+            return lobbyPlayers.filter(p => p.role !== "host" && !p.ready);
+        }
+
+        function updateReadyButton() {
+            if (!dom.readyBtn) return;
+            dom.readyBtn.textContent = lobbyReady ? "取消准备" : "准备";
+            dom.readyBtn.disabled = lobbyStarted;
+            dom.readyBtn.title = lobbyStarted ? "游戏已开始" : "";
+        }
+
+        function updateStartNetGameState() {
+            if (!dom.startNetGameBtn) return;
+            const waitingPlayers = getWaitingPlayers();
+            const canStart = !lobbyStarted && waitingPlayers.length === 0;
+            dom.startNetGameBtn.disabled = !canStart;
+            dom.startNetGameBtn.textContent = lobbyStarted ? "正在开始" : (canStart ? "开始游戏" : "等待全员准备");
+            dom.startNetGameBtn.title = canStart ? "所有玩家已准备" : ("未准备：" + waitingPlayers.map(p => p.name || "玩家").join("、"));
+        }
+
+        function renderRoomSettings() {
+            lobbySettings = normalizeRoomSettings(lobbySettings);
+            if (dom.roomDifficultySelect) dom.roomDifficultySelect.value = lobbySettings.difficulty;
+            if (dom.roomAiSelect) dom.roomAiSelect.value = lobbySettings.aiMode;
+            if (dom.roomSettingsDisplay) dom.roomSettingsDisplay.textContent = "房间设置：" + formatRoomSettings(lobbySettings);
+            updateReadyButton();
+            updateStartNetGameState();
+        }
+
+        function syncLocalReadyFromRoom() {
+            const ownPlayer = lobbyPlayers.find(p => Number(p.id) === Number(lobbyClientId));
+            lobbyReady = !!(ownPlayer && ownPlayer.ready);
+        }
+
+        function applyRoomState(msg = {}) {
+            if (Array.isArray(msg.players)) lobbyPlayers = msg.players;
+            if (msg.settings) lobbySettings = normalizeRoomSettings(msg.settings);
+            if (typeof msg.started === "boolean") lobbyStarted = msg.started;
+            syncLocalReadyFromRoom();
+            updatePlayerListUI(dom.playerList, lobbyPlayers);
+            updatePlayerListUI(dom.clientPlayerList, lobbyPlayers);
+            renderRoomSettings();
+        }
+
+        function sendRoomSettings() {
+            if (!lobbyWs || lobbyWs.readyState !== WebSocket.OPEN) return;
+            lobbySettings = normalizeRoomSettings({
+                difficulty: dom.roomDifficultySelect ? dom.roomDifficultySelect.value : lobbySettings.difficulty,
+                aiMode: dom.roomAiSelect ? dom.roomAiSelect.value : lobbySettings.aiMode
+            });
+            renderRoomSettings();
+            lobbyWs.send(JSON.stringify({ type: "settings", settings: lobbySettings }));
         }
 
         function closeLobbySocket(silent = false) {
@@ -8295,6 +8427,9 @@
         }
 
         function openLobby() {
+            lobbySettings = { difficulty: "normal", aiMode: "normal" };
+            lobbyReady = false;
+            lobbyStarted = false;
             dom.startScreen.classList.add("hidden");
             dom.lobbyScreen.classList.remove("hidden");
             dom.lobbyOptions.classList.remove("hidden");
@@ -8302,6 +8437,7 @@
             dom.hostLobby.classList.add("hidden");
             dom.clientLobby.classList.add("hidden");
             if (dom.hostAddressDisplay) dom.hostAddressDisplay.textContent = "";
+            renderRoomSettings();
             clearLobbyStatus();
         }
 
@@ -8311,6 +8447,10 @@
             closeLobbySocket(true);
             lobbyPlayers = [];
             lobbyClientId = null;
+            lobbyReady = false;
+            lobbyStarted = false;
+            lobbySettings = { difficulty: "normal", aiMode: "normal" };
+            renderRoomSettings();
         }
 
         function connectToServer(onMessage, address) {
@@ -8347,6 +8487,53 @@
             return ws;
         }
 
+        function getGameScene() {
+            return window.game && window.game.scene && window.game.scene.scenes[0] ? window.game.scene.scenes[0] : null;
+        }
+
+        function beginHostNetworkGame(msg = {}) {
+            const scene = getGameScene();
+            if (!scene) return;
+            const settings = normalizeRoomSettings(msg.settings || lobbySettings);
+            const hostId = Number(msg.playerId || lobbyClientId || 1);
+            dom.lobbyScreen.classList.add("hidden");
+            dom.hud.classList.remove("hidden");
+            scene.netMode = "host";
+            scene.localPlayerId = "player-" + hostId;
+            scene.ws = lobbyWs;
+            scene.netPlayers.clear();
+            for (const p of lobbyPlayers) {
+                const playerId = Number(p.id);
+                if (!Number.isFinite(playerId)) continue;
+                scene.netPlayers.set("player-" + playerId, {
+                    name: p.name || (p.role === "host" ? "主机" : "玩家" + playerId),
+                    color: PLAYER_COLORS[(playerId - 1) % PLAYER_COLORS.length],
+                    wsId: playerId
+                });
+            }
+            if (!scene.netPlayers.has(scene.localPlayerId)) {
+                scene.netPlayers.set(scene.localPlayerId, { name: "主机", color: PLAYER_COLORS[(hostId - 1) % PLAYER_COLORS.length], wsId: hostId });
+            }
+            scene.startMatch(settings.difficulty, { aiMode: settings.aiMode });
+            scene.initHostPlayerStates();
+        }
+
+        function beginClientNetworkGame(msg = {}) {
+            const scene = getGameScene();
+            if (!scene) return;
+            const settings = normalizeRoomSettings(msg.settings || lobbySettings);
+            dom.lobbyScreen.classList.add("hidden");
+            dom.hud.classList.remove("hidden");
+            scene.netMode = "client";
+            scene.localPlayerId = "player-" + (msg.playerId || lobbyClientId || 2);
+            scene.ws = lobbyWs;
+            scene.renderMode = selectedMode;
+            scene.controlMode = selectedControlMode === "keyboard" ? "keyboard" : "mouse";
+            scene.applyMatchSettings(settings);
+            scene.matchState = "playing";
+            scene.setupClientMode();
+        }
+
         if (dom.multiBtn) {
             dom.multiBtn.addEventListener("click", () => {
                 soundFx.unlock();
@@ -8365,14 +8552,18 @@
                 dom.hostLobby.classList.remove("hidden");
                 const ws = connectToServer((msg) => {
                     if (msg.type === "hostRegistered") {
-                        lobbyPlayers = msg.players || [];
-                        updatePlayerListUI(dom.playerList, lobbyPlayers);
+                        lobbyClientId = msg.clientId;
+                        applyRoomState(msg);
                         if (dom.hostAddressDisplay) {
                             dom.hostAddressDisplay.textContent = "联机地址：" + (msg.serverAddress || ("localhost:" + NET_SERVER_PORT));
                         }
+                    } else if (msg.type === "roomState") {
+                        applyRoomState(msg);
                     } else if (msg.type === "playersList") {
                         lobbyPlayers = msg.players || [];
-                        updatePlayerListUI(dom.playerList, lobbyPlayers);
+                        applyRoomState({ players: lobbyPlayers });
+                    } else if (msg.type === "startGame") {
+                        beginHostNetworkGame(msg);
                     } else if (msg.type === "error") {
                         showLobbyStatus(msg.message);
                     }
@@ -8403,23 +8594,15 @@
                         lobbyClientId = msg.clientId;
                         dom.joinForm.classList.add("hidden");
                         dom.clientLobby.classList.remove("hidden");
-                        lobbyPlayers = msg.players || [];
-                        updatePlayerListUI(dom.clientPlayerList, lobbyPlayers);
+                        applyRoomState(msg);
                         showLobbyStatus("已连接，等待主机开始游戏...");
+                    } else if (msg.type === "roomState") {
+                        applyRoomState(msg);
                     } else if (msg.type === "playersList") {
                         lobbyPlayers = msg.players || [];
-                        updatePlayerListUI(dom.clientPlayerList, lobbyPlayers);
+                        applyRoomState({ players: lobbyPlayers });
                     } else if (msg.type === "startGame") {
-                        dom.lobbyScreen.classList.add("hidden");
-                        dom.hud.classList.remove("hidden");
-                        if (window.game && window.game.scene.scenes[0]) {
-                            const scene = window.game.scene.scenes[0];
-                            scene.netMode = "client";
-                            scene.localPlayerId = "player-" + (msg.playerId || lobbyClientId || 2);
-                            scene.ws = lobbyWs;
-                            scene.matchState = "playing";
-                            scene.setupClientMode();
-                        }
+                        beginClientNetworkGame(msg);
                     } else if (msg.type === "error") {
                         showLobbyStatus(msg.message);
                     } else if (msg.type === "hostDisconnected") {
@@ -8434,6 +8617,27 @@
             });
         }
 
+        if (dom.roomDifficultySelect) {
+            dom.roomDifficultySelect.addEventListener("change", sendRoomSettings);
+        }
+
+        if (dom.roomAiSelect) {
+            dom.roomAiSelect.addEventListener("change", sendRoomSettings);
+        }
+
+        if (dom.readyBtn) {
+            dom.readyBtn.addEventListener("click", () => {
+                soundFx.unlock();
+                if (!lobbyWs || lobbyWs.readyState !== WebSocket.OPEN) {
+                    showLobbyStatus("未连接");
+                    return;
+                }
+                lobbyReady = !lobbyReady;
+                updateReadyButton();
+                lobbyWs.send(JSON.stringify({ type: "ready", ready: lobbyReady }));
+            });
+        }
+
         if (dom.startNetGameBtn) {
             dom.startNetGameBtn.addEventListener("click", () => {
                 soundFx.unlock();
@@ -8441,23 +8645,14 @@
                     showLobbyStatus("未连接");
                     return;
                 }
-                lobbyWs.send(JSON.stringify({ type: "startGame" }));
-                dom.lobbyScreen.classList.add("hidden");
-                dom.hud.classList.remove("hidden");
-                if (window.game && window.game.scene.scenes[0]) {
-                    const scene = window.game.scene.scenes[0];
-                    scene.netMode = "host";
-                    scene.localPlayerId = "player-1";
-                    scene.ws = lobbyWs;
-                    for (const p of lobbyPlayers) {
-                        if (p.role !== "host") {
-                            scene.netPlayers.set("player-" + p.id, { name: p.name, color: PLAYER_COLORS[(p.id - 1) % PLAYER_COLORS.length], wsId: p.id });
-                        }
-                    }
-                    scene.netPlayers.set(scene.localPlayerId, { name: "主机", color: PLAYER_COLORS[0] });
-                    scene.startMatch("normal");
-                    scene.initHostPlayerStates();
+                const waitingPlayers = getWaitingPlayers();
+                if (waitingPlayers.length > 0) {
+                    showLobbyStatus("还有玩家未准备：" + waitingPlayers.map(p => p.name || "玩家").join("、"));
+                    updateStartNetGameState();
+                    return;
                 }
+                lobbyWs.send(JSON.stringify({ type: "startGame" }));
+                showLobbyStatus("正在开始游戏...");
             });
         }
 
