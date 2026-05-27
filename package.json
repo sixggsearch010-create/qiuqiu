@@ -5,12 +5,24 @@
   "description": "A browser-based ball eating game with LAN multiplayer support.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "generate:assets": "node scripts/generate-neon-assets.mjs"
   },
   "dependencies": {
+    "phaser": "^3.80.1",
+    "three": "^0.160.0",
     "ws": "^8.21.0"
   },
   "engines": {
-    "node": ">=16"
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/extensions": "^4.3.0",
+    "@gltf-transform/functions": "^4.3.0",
+    "vite": "^8.0.14"
   }
 }

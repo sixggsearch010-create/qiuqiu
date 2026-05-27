@@ -5,17 +5,28 @@ cd /d "%~dp0"
 
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=8080"
+set "VITE_PORT=%~2"
+if "%VITE_PORT%"=="" set "VITE_PORT=5173"
 
 where node >nul 2>nul
 if errorlevel 1 (
     echo Node.js is required to run the LAN server.
-    echo Please install Node.js 16 or newer, then run this script again.
+    echo Please install Node.js 20.19 or newer, or Node.js 22.12 or newer, then run this script again.
     start "" "https://nodejs.org/"
     pause
     exit /b 1
 )
 
-if not exist "node_modules\ws\package.json" (
+node -e "const v=process.versions.node.split('.').map(Number); const ok=(v[0]===20&&v[1]>=19)||v[0]>20; process.exit(ok?0:1)"
+if errorlevel 1 (
+    echo This project requires Node.js 20.19 or newer, or Node.js 22.12 or newer.
+    echo Current version:
+    node --version
+    pause
+    exit /b 1
+)
+
+if not exist "node_modules\vite\package.json" (
     echo Installing dependencies...
     call npm install
     if errorlevel 1 (
@@ -25,21 +36,16 @@ if not exist "node_modules\ws\package.json" (
     )
 )
 
-for /f "delims=" %%F in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath (Get-Location) -Filter *.html | Select-Object -First 1 -ExpandProperty FullName"') do set "GAME_HTML=%%F"
-
-if not defined GAME_HTML (
-    echo No HTML game file was found in this folder.
-    pause
-    exit /b 1
-)
-
 echo Starting LAN server on ws://localhost:%PORT%
 start "qiuqiu server" /D "%~dp0" cmd /k "node server.js %PORT%"
 
-timeout /t 2 /nobreak >nul
-start "" "%GAME_HTML%"
+echo Starting Vite game client on http://localhost:%VITE_PORT%
+start "qiuqiu game" /D "%~dp0" cmd /k "npm run dev -- --port %VITE_PORT%"
+
+timeout /t 4 /nobreak >nul
+start "" "http://localhost:%VITE_PORT%/小游戏.html"
 
 echo.
-echo The server window stays open for LAN multiplayer.
-echo Close the server window when you are done playing.
+echo The server and game windows stay open for LAN multiplayer.
+echo Close both command windows when you are done playing.
 exit /b 0

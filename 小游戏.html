@@ -5,10 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
     <title>小球吞噬战</title>
     <link rel="icon" href="data:,">
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
-    <script>if(!window.Phaser){document.write('<script src="https://unpkg.com/phaser@3.80.1/dist/phaser.min.js"><\/script>');}</script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-    <script>if(!window.THREE){document.write('<script src="https://unpkg.com/three@0.160.0/build/three.min.js"><\/script>');}</script>
     <style>
         :root {
             color-scheme: dark;
@@ -1153,6 +1149,50 @@
             width: 100%;
             height: 100%;
         }
+        .three-camera-reset {
+            position: absolute;
+            right: max(16px, env(safe-area-inset-right));
+            bottom: max(96px, env(safe-area-inset-bottom));
+            z-index: 7;
+            padding: 9px 12px;
+            border: 1px solid rgba(34, 211, 238, 0.45);
+            border-radius: 999px;
+            background: rgba(3, 7, 18, 0.68);
+            color: #e0f2fe;
+            font-weight: 700;
+            box-shadow: 0 0 24px rgba(34, 211, 238, 0.24);
+            cursor: pointer;
+        }
+        .three-camera-reset:hover {
+            background: rgba(8, 47, 73, 0.78);
+        }
+        .quality-section {
+            margin: 10px 0 6px;
+        }
+        .quality-section h3 {
+            font-size: 13px;
+            color: #94a3b8;
+            margin: 0 0 8px;
+        }
+        .quality-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        .quality-btn {
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(15, 23, 42, 0.62);
+            color: #cbd5e1;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .quality-btn.selected {
+            border-color: #22d3ee;
+            color: #67e8f9;
+            background: rgba(34, 211, 238, 0.09);
+        }
 
         /* Skin selector */
         .skin-section {
@@ -1340,6 +1380,14 @@
                         </button>
                     </div>
                 </div>
+                <div class="quality-section">
+                    <h3>3D 画质</h3>
+                    <div class="quality-row">
+                        <button class="quality-btn selected" data-quality="high">高画质</button>
+                        <button class="quality-btn" data-quality="medium">均衡</button>
+                        <button class="quality-btn" data-quality="low">低画质</button>
+                    </div>
+                </div>
                 <div class="skin-section">
                     <h3>选择皮肤</h3>
                     <div class="skin-grid" id="skinGrid"></div>
@@ -1461,7 +1509,14 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import Phaser from "phaser";
+        import * as THREE from "three";
+        import { NeonThreeRenderer, createRenderSnapshot } from "./src/render/neon-three-renderer.js";
+
+        window.Phaser = Phaser;
+        window.THREE = THREE;
+
         const WORLD_SIZE = 8000;
         const INFINITE_MASS_THRESHOLD = 100000000;
         const INFINITE_WORLD_SIZE = 1000000;
@@ -1747,7 +1802,8 @@
         };
         let selectedSkin = "default";
         let selectedMode = "2d"; // "2d" or "3d"
-        let threeDMode = null; // ThreeDMode instance
+        let selected3DQuality = "high";
+        let threeDMode = null; // NeonThreeRenderer instance
 
         const DIFFICULTY = {
             easy: {
@@ -1837,6 +1893,7 @@
             muteBtn: document.getElementById("muteBtn"),
             multiBtn: document.getElementById("multiBtn"),
             lobbyScreen: document.getElementById("lobbyScreen"),
+            threeCanvas: document.getElementById("threeCanvas"),
             lobbyOptions: document.getElementById("lobbyOptions"),
             hostBtn: document.getElementById("hostBtn"),
             joinBtn: document.getElementById("joinBtn"),
@@ -1975,6 +2032,38 @@
 
         function colorToCss(color) {
             return "#" + color.toString(16).padStart(6, "0");
+        }
+
+        function setSelectedMode(mode) {
+            selectedMode = mode === "3d" ? "3d" : "2d";
+            try { localStorage.setItem("agar_mode", selectedMode); } catch {}
+            document.querySelectorAll(".mode-btn").forEach(btn => btn.classList.toggle("selected", btn.dataset.mode === selectedMode));
+        }
+
+        function setSelected3DQuality(quality) {
+            selected3DQuality = ["high", "medium", "low"].includes(quality) ? quality : "high";
+            try { localStorage.setItem("agar_3d_quality", selected3DQuality); } catch {}
+            document.querySelectorAll(".quality-btn").forEach(btn => btn.classList.toggle("selected", btn.dataset.quality === selected3DQuality));
+            if (threeDMode) threeDMode.setQuality(selected3DQuality);
+        }
+
+        function createNeonThreeRenderer(scene) {
+            if (!dom.threeCanvas) return null;
+            return new NeonThreeRenderer({
+                mount: dom.threeCanvas,
+                worldSize: scene.getWorldSize(),
+                quality: selected3DQuality,
+                onAction: action => {
+                    soundFx.unlock();
+                    if (action === "split") {
+                        if (scene.netMode === "client") scene.sendActionToHost("split");
+                        else scene.splitOwner(scene.localPlayerId);
+                    } else if (action === "eject") {
+                        if (scene.netMode === "client") scene.sendActionToHost("eject");
+                        else scene.ejectOwnerMass(scene.localPlayerId);
+                    }
+                }
+            });
         }
 
         function inferMessageChannel(text) {
@@ -2479,6 +2568,8 @@
                 if (params.get("autostart") === "1") {
                     setTimeout(() => {
                         selectedDifficulty = params.get("difficulty") || selectedDifficulty;
+                        setSelectedMode(params.get("mode") || selectedMode);
+                        setSelected3DQuality(params.get("quality") || selected3DQuality);
                         setSelectedControlMode(params.get("controlMode") || selectedControlMode);
                         dom.startScreen.classList.add("hidden");
                         dom.helpScreen.classList.add("hidden");
@@ -2633,10 +2724,21 @@
                 // 3D mode setup
                 if (this.renderMode === "3d") {
                     if (threeDMode) { threeDMode.dispose(); threeDMode = null; }
-                    threeDMode = new ThreeDMode(this);
-                    threeDMode.show();
-                    dom.gameMount.style.display = "none";
+                    try {
+                        threeDMode = createNeonThreeRenderer(this);
+                        if (threeDMode) threeDMode.show();
+                        dom.gameMount.style.display = "none";
+                    } catch (error) {
+                        console.error("3D 渲染器初始化失败", error);
+                        this.renderMode = "2d";
+                        selectedMode = "2d";
+                        dom.gameMount.style.display = "";
+                        if (dom.threeCanvas) dom.threeCanvas.style.display = "none";
+                        showMessage("3D 初始化失败，已切回 2D", "info", true);
+                    }
                 } else {
+                    if (threeDMode) { threeDMode.dispose(); threeDMode = null; }
+                    if (dom.threeCanvas) dom.threeCanvas.style.display = "none";
                     dom.gameMount.style.display = "";
                 }
             }
@@ -2703,6 +2805,7 @@
                     this.broadcastState();
                 }
 
+                this.lastRenderDt = dt;
                 this.updateCamera(time, dt);
                 this.updateHud(false, time);
                 this.render();
@@ -6224,7 +6327,7 @@
 
             render() {
                 if (this.renderMode === "3d" && threeDMode && !threeDMode.disposed) {
-                    threeDMode.sync(this.time.now);
+                    threeDMode.render(createRenderSnapshot(this), this.time.now, this.lastRenderDt || 0.016);
                     return;
                 }
                 const cam = this.cameras.main;
@@ -7174,10 +7277,21 @@
                 this.cameras.main.setZoom(0.84);
                 if (this.renderMode === "3d") {
                     if (threeDMode) { threeDMode.dispose(); threeDMode = null; }
-                    threeDMode = new ThreeDMode(this);
-                    threeDMode.show();
-                    dom.gameMount.style.display = "none";
+                    try {
+                        threeDMode = createNeonThreeRenderer(this);
+                        if (threeDMode) threeDMode.show();
+                        dom.gameMount.style.display = "none";
+                    } catch (error) {
+                        console.error("3D 渲染器初始化失败", error);
+                        this.renderMode = "2d";
+                        selectedMode = "2d";
+                        dom.gameMount.style.display = "";
+                        if (dom.threeCanvas) dom.threeCanvas.style.display = "none";
+                        showMessage("3D 初始化失败，已切回 2D", "info", true);
+                    }
                 } else {
+                    if (threeDMode) { threeDMode.dispose(); threeDMode = null; }
+                    if (dom.threeCanvas) dom.threeCanvas.style.display = "none";
                     dom.gameMount.style.display = "";
                 }
                 this.handleHostMessages();
@@ -7789,11 +7903,12 @@
             if (selectedMode !== "2d" && selectedMode !== "3d") selectedMode = "2d";
             document.querySelectorAll(".mode-btn").forEach(btn => {
                 btn.classList.toggle("selected", btn.dataset.mode === selectedMode);
-                btn.addEventListener("click", () => {
-                    selectedMode = btn.dataset.mode;
-                    try { localStorage.setItem("agar_mode", selectedMode); } catch {}
-                    document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("selected", b.dataset.mode === selectedMode));
-                });
+                btn.addEventListener("click", () => setSelectedMode(btn.dataset.mode));
+            });
+            try { selected3DQuality = localStorage.getItem("agar_3d_quality") || "high"; } catch {}
+            setSelected3DQuality(selected3DQuality);
+            document.querySelectorAll(".quality-btn").forEach(btn => {
+                btn.addEventListener("click", () => setSelected3DQuality(btn.dataset.quality));
             });
         }
 
@@ -7820,441 +7935,9 @@
             }
         }
 
-        // === 3D Mode ===
-        class ThreeDMode {
-            constructor(gameScene) {
-                this.gameScene = gameScene;
-                this.container = document.getElementById("threeCanvas");
-                this.worldSize = gameScene.getWorldSize();
-                this.now = 0;
-                this.disposed = false;
-                this.cellMeshes = new Map();
-                this.foodInstance = null;
-                this.foodCount = 0;
-                this.virusInstances = [];
-                this.powerupMeshes = new Map();
-
-                // Scene
-                this.scene = new THREE.Scene();
-                this.scene.background = new THREE.Color(0x050816);
-                this.scene.fog = new THREE.FogExp2(0x050816, 0.00012);
-
-                // Camera
-                this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 10, 20000);
-                this.camera.position.set(0, 1200, 800);
-                this.cameraTargetSmooth = new THREE.Vector3(WORLD_SIZE / 2, 0, WORLD_SIZE / 2);
-
-                // Renderer
-                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-                this.renderer.setSize(window.innerWidth, window.innerHeight);
-                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-                this.renderer.shadowMap.enabled = false;
-                this.container.appendChild(this.renderer.domElement);
-
-                // Orbit controls (inline implementation)
-                this.controls = {
-                    target: new THREE.Vector3(0, 0, 0),
-                    spherical: new THREE.Spherical(1400, Math.PI * 0.38, 0),
-                    sphericalDelta: new THREE.Spherical(),
-                    rotateSpeed: 0.6,
-                    dampingFactor: 0.08,
-                    zoomSpeed: 1.0,
-                    minDistance: 200,
-                    maxDistance: 6000,
-                    isPointerDown: false,
-                    pointerStart: { x: 0, y: 0 },
-                    pointerDelta: { x: 0, y: 0 },
-                    update: function(dt) {
-                        this.spherical.theta += this.sphericalDelta.theta;
-                        this.spherical.phi += this.sphericalDelta.phi;
-                        this.spherical.phi = Math.max(0.15, Math.min(Math.PI * 0.48, this.spherical.phi));
-                        this.sphericalDelta.theta *= (1 - this.dampingFactor);
-                        this.sphericalDelta.phi *= (1 - this.dampingFactor);
-                        this.spherical.radius = Math.max(this.minDistance, Math.min(this.maxDistance, this.spherical.radius));
-                    }
-                };
-
-                // Lights
-                this.scene.add(new THREE.AmbientLight(0x404060, 0.65));
-                const dirLight = new THREE.DirectionalLight(0xb0c4de, 0.55);
-                dirLight.position.set(1, 2, 1).normalize();
-                this.scene.add(dirLight);
-                this.hemiLight = new THREE.HemisphereLight(0x3a5070, 0x0a0a1a, 0.35);
-                this.scene.add(this.hemiLight);
-
-                this.createEnvironment();
-                this.setupControls();
-                this.setupInput();
-
-                this._onResize = () => {
-                    if (!this.disposed) this.resize(window.innerWidth, window.innerHeight);
-                };
-                window.addEventListener("resize", this._onResize);
-            }
-
-            createEnvironment() {
-                // Ground plane
-                const groundGeo = new THREE.PlaneGeometry(this.worldSize, this.worldSize);
-                const groundMat = new THREE.MeshStandardMaterial({ color: 0x080e1a, roughness: 0.95, metalness: 0.05 });
-                const ground = new THREE.Mesh(groundGeo, groundMat);
-                ground.rotation.x = -Math.PI / 2;
-                ground.position.set(this.worldSize / 2, -2, this.worldSize / 2);
-                this.scene.add(ground);
-
-                // Grid lines
-                const gridHelper = new THREE.GridHelper(this.worldSize, 50, 0x1e293b, 0x131d30);
-                gridHelper.position.set(this.worldSize / 2, -1, this.worldSize / 2);
-                this.scene.add(gridHelper);
-
-                // Boundary walls
-                const ws = this.worldSize;
-                const wallH = 120;
-                const wallMat = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, transparent: true, opacity: 0.35, roughness: 0.4, emissive: 0x7f1d1d, emissiveIntensity: 0.2 });
-                const wallPositions = [
-                    { x: ws / 2, z: 0, rY: 0, w: ws },
-                    { x: ws / 2, z: ws, rY: 0, w: ws },
-                    { x: 0, z: ws / 2, rY: Math.PI / 2, w: ws },
-                    { x: ws, z: ws / 2, rY: Math.PI / 2, w: ws }
-                ];
-                for (const wp of wallPositions) {
-                    const wallGeo = new THREE.BoxGeometry(wp.w, wallH, 6);
-                    const wall = new THREE.Mesh(wallGeo, wallMat);
-                    wall.position.set(wp.x, wallH / 2, wp.z);
-                    wall.rotation.y = wp.rY;
-                    this.scene.add(wall);
-                }
-
-                // Outer glow lines
-                const lineMat = new THREE.LineBasicMaterial({ color: 0xfb7185, transparent: true, opacity: 0.65 });
-                const edges = [
-                    [[0, 0, 0], [ws, 0, 0]], [[ws, 0, 0], [ws, 0, ws]],
-                    [[ws, 0, ws], [0, 0, ws]], [[0, 0, ws], [0, 0, 0]]
-                ];
-                for (const [a, b] of edges) {
-                    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]);
-                    this.scene.add(new THREE.Line(geo, lineMat));
-                }
-
-                // Player glow ring
-                this.playerGlow = new THREE.Mesh(
-                    new THREE.TorusGeometry(1, 8, 16, 48),
-                    new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.35 })
-                );
-                this.playerGlow.rotation.x = Math.PI / 2;
-                this.playerGlow.visible = false;
-                this.scene.add(this.playerGlow);
-            }
-
-            setupControls() {
-                const self = this;
-                const el = this.renderer.domElement;
-                const controls = this.controls;
-
-                el.addEventListener("contextmenu", e => e.preventDefault());
-
-                el.addEventListener("pointerdown", e => {
-                    if (e.button === 2) {
-                        controls.isPointerDown = true;
-                        controls.pointerStart.x = e.clientX;
-                        controls.pointerStart.y = e.clientY;
-                        controls.pointerDelta.x = 0;
-                        controls.pointerDelta.y = 0;
-                        e.preventDefault();
-                    }
-                });
-
-                window.addEventListener("pointermove", e => {
-                    if (!controls.isPointerDown) return;
-                    controls.pointerDelta.x = e.clientX - controls.pointerStart.x;
-                    controls.pointerDelta.y = e.clientY - controls.pointerStart.y;
-                    controls.pointerStart.x = e.clientX;
-                    controls.pointerStart.y = e.clientY;
-                    controls.sphericalDelta.theta -= controls.pointerDelta.x * controls.rotateSpeed * 0.003;
-                    controls.sphericalDelta.phi += controls.pointerDelta.y * controls.rotateSpeed * 0.003;
-                });
-
-                window.addEventListener("pointerup", e => {
-                    if (e.button === 2) controls.isPointerDown = false;
-                });
-
-                el.addEventListener("wheel", e => {
-                    controls.spherical.radius += e.deltaY * controls.zoomSpeed * 1.5;
-                    controls.spherical.radius = Math.max(controls.minDistance, Math.min(controls.maxDistance, controls.spherical.radius));
-                    e.preventDefault();
-                }, { passive: false });
-            }
-
-            setupInput() {
-                const el = this.renderer.domElement;
-                const scene = this.gameScene;
-
-                el.addEventListener("pointerdown", e => {
-                    if (!scene || scene.matchState !== "playing") return;
-                    if (e.button === 0) {
-                        if (scene.netMode === "client") scene.sendActionToHost("split");
-                        else scene.splitOwner(scene.localPlayerId);
-                    } else if (e.button === 1) {
-                        if (scene.netMode === "client") scene.sendActionToHost("eject");
-                        else scene.ejectOwnerMass(scene.localPlayerId);
-                    }
-                });
-            }
-
-            updateCamera(playerCenter, dt) {
-                if (!playerCenter || playerCenter.mass <= 0) return;
-                const controls = this.controls;
-                const target = controls.target;
-
-                // Smooth camera follow
-                const lerpFactor = 1 - Math.exp(-4.5 * dt);
-                this.cameraTargetSmooth.x += (playerCenter.x - this.cameraTargetSmooth.x) * lerpFactor;
-                this.cameraTargetSmooth.z += (playerCenter.y - this.cameraTargetSmooth.z) * lerpFactor;
-                target.copy(this.cameraTargetSmooth);
-                target.y = 0;
-
-                controls.update(dt);
-                const s = controls.spherical;
-                s.radius = Math.max(controls.minDistance, Math.min(controls.maxDistance,
-                    600 + Math.sqrt(playerCenter.mass) * 2.5));
-
-                const sinPhi = Math.sin(s.phi);
-                this.camera.position.set(
-                    target.x + s.radius * sinPhi * Math.sin(s.theta),
-                    target.y + s.radius * Math.cos(s.phi),
-                    target.z + s.radius * sinPhi * Math.cos(s.theta)
-                );
-                this.camera.lookAt(target.x, target.y + 30, target.z);
-            }
-
-            sync(time) {
-                if (this.disposed) return;
-                const scene = this.gameScene;
-                const state = scene.cells;
-                this.now = time;
-                const dt = 0.016;
-                const center = scene.getPlayerCenter();
-
-                this.updateCamera(center, dt);
-                this.syncCells(state);
-                this.syncFood(scene.food);
-                this.syncViruses(scene.viruses);
-                this.syncPowerups(scene.powerups, time);
-                this.updateGlow(center, time);
-
-                this.renderer.render(this.scene, this.camera);
-            }
-
-            syncCells(cells) {
-                const seen = new Set();
-                for (const cell of cells) {
-                    seen.add(cell.id);
-                    const isPlayer = this.gameScene.isLocalPlayer(cell.owner);
-                    let mesh = this.cellMeshes.get(cell.id);
-                    if (!mesh) {
-                        const r = radiusFromMass(cell.mass);
-                        const geo = new THREE.SphereGeometry(r, 28, 20);
-                        const colorHex = (cell.color & 0xffffff);
-                        const mat = new THREE.MeshPhongMaterial({
-                            color: new THREE.Color().setHex(colorHex),
-                            emissive: isPlayer ? new THREE.Color().setHex(colorHex) : new THREE.Color(0x000000),
-                            emissiveIntensity: isPlayer ? 0.15 : 0,
-                            shininess: isPlayer ? 60 : 25
-                        });
-                        mat.needsUpdate = false;
-                        mesh = new THREE.Mesh(geo, mat);
-                        mesh.castShadow = false;
-                        this.scene.add(mesh);
-                        this.cellMeshes.set(cell.id, mesh);
-                        if (isPlayer) {
-                            const outlineMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc, transparent: true, opacity: 0.5 });
-                            const outline = new THREE.Mesh(new THREE.SphereGeometry(r * 1.04, 28, 20), outlineMat);
-                            outline.userData.isOutline = true;
-                            mesh.add(outline);
-                        }
-                    }
-                    const targetR = radiusFromMass(cell.mass);
-                    const currentR = mesh.geometry.parameters?.radius || targetR;
-                    const newR = currentR + (targetR - currentR) * 0.15;
-                    if (Math.abs(newR - currentR) > 0.1) {
-                        mesh.geometry.dispose();
-                        mesh.geometry = new THREE.SphereGeometry(newR, 28, 20);
-                        if (mesh.children[0]?.userData?.isOutline) {
-                            mesh.children[0].geometry.dispose();
-                            mesh.children[0].geometry = new THREE.SphereGeometry(newR * 1.04, 28, 20);
-                        }
-                    }
-                    mesh.position.set(cell.x, newR + 2, cell.y);
-                    mesh.visible = true;
-                }
-                for (const [id, mesh] of this.cellMeshes) {
-                    if (!seen.has(id)) {
-                        this.scene.remove(mesh);
-                        mesh.geometry?.dispose();
-                        mesh.material?.dispose();
-                        this.cellMeshes.delete(id);
-                    }
-                }
-            }
-
-            syncFood(food) {
-                const count = food.length;
-                if (count === 0) {
-                    if (this.foodInstance) { this.foodInstance.visible = false; }
-                    return;
-                }
-                if (!this.foodInstance || this.foodCount < count) {
-                    if (this.foodInstance) {
-                        this.scene.remove(this.foodInstance);
-                        this.foodInstance.geometry.dispose();
-                        this.foodInstance.material.dispose();
-                    }
-                    this.foodCount = Math.max(count, 100);
-                    const geo = new THREE.SphereGeometry(1, 8, 6);
-                    const mat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 15, emissive: 0x111111, emissiveIntensity: 0.15 });
-                    this.foodInstance = new THREE.InstancedMesh(geo, mat, this.foodCount);
-                    this.foodInstance.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.foodCount * 3), 3);
-                    this.scene.add(this.foodInstance);
-                }
-                this.foodInstance.visible = true;
-                const dummy = new THREE.Object3D();
-                const color = new THREE.Color();
-                for (let i = 0; i < this.foodCount; i++) {
-                    if (i < count) {
-                        const pellet = food[i];
-                        const r = (pellet.radius || 2.5) * (1 + Math.sin(this.now * 0.004 + pellet.x * 0.01 + pellet.y * 0.01) * 0.08);
-                        dummy.position.set(pellet.x, r + 1, pellet.y);
-                        dummy.scale.setScalar(r);
-                        dummy.updateMatrix();
-                        this.foodInstance.setMatrixAt(i, dummy.matrix);
-                        color.setHex(pellet.golden ? 0xfacc15 : (pellet.color & 0xffffff));
-                        this.foodInstance.setColorAt(i, color);
-                    } else {
-                        dummy.position.set(0, -10000, 0);
-                        dummy.scale.setScalar(0.001);
-                        dummy.updateMatrix();
-                        this.foodInstance.setMatrixAt(i, dummy.matrix);
-                    }
-                }
-                this.foodInstance.instanceMatrix.needsUpdate = true;
-                if (this.foodInstance.instanceColor) this.foodInstance.instanceColor.needsUpdate = true;
-            }
-
-            syncViruses(viruses) {
-                while (this.virusInstances.length < viruses.length) {
-                    const geo = this.createVirusGeometry();
-                    const mat = new THREE.MeshPhongMaterial({ color: 0x22c55e, emissive: 0x0a3d1a, emissiveIntensity: 0.3, shininess: 35, flatShading: true });
-                    const mesh = new THREE.Mesh(geo, mat);
-                    this.scene.add(mesh);
-                    this.virusInstances.push(mesh);
-                }
-                for (let i = 0; i < this.virusInstances.length; i++) {
-                    const mesh = this.virusInstances[i];
-                    if (i < viruses.length) {
-                        const virus = viruses[i];
-                        const r = virus.radius || VIRUS_RADIUS;
-                        mesh.position.set(virus.x, r * 0.8 + 2, virus.y);
-                        mesh.scale.setScalar(r / VIRUS_RADIUS);
-                        mesh.rotation.y = this.now * 0.0008;
-                        mesh.visible = true;
-                    } else {
-                        mesh.visible = false;
-                    }
-                }
-            }
-
-            createVirusGeometry() {
-                const geo = new THREE.IcosahedronGeometry(VIRUS_RADIUS, 1);
-                const pos = geo.attributes.position;
-                for (let i = 0; i < pos.count; i++) {
-                    const y = pos.getY(i);
-                    const scale = (y > 0 ? 1.2 : 0.85);
-                    pos.setX(i, pos.getX(i) * scale);
-                    pos.setZ(i, pos.getZ(i) * scale);
-                    if (i % 2 === 0) pos.setY(i, y * 1.15);
-                }
-                geo.computeVertexNormals();
-                return geo;
-            }
-
-            syncPowerups(powerups, time) {
-                const seen = new Set();
-                for (const pu of powerups) {
-                    const key = pu.type + "_" + pu.x.toFixed(0) + "_" + pu.y.toFixed(0);
-                    seen.add(key);
-                    if (!this.powerupMeshes.has(key)) {
-                        let mesh;
-                        if (pu.type === "magnet") {
-                            mesh = new THREE.Mesh(new THREE.TorusGeometry(12, 3, 12, 24), new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.8 }));
-                        } else if (pu.type === "shield") {
-                            mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(14, 1), new THREE.MeshPhongMaterial({ color: 0xfacc15, emissive: 0xfacc15, emissiveIntensity: 0.35 }));
-                        } else {
-                            mesh = new THREE.Mesh(new THREE.ConeGeometry(10, 20, 8), new THREE.MeshPhongMaterial({ color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 0.3 }));
-                        }
-                        this.scene.add(mesh);
-                        this.powerupMeshes.set(key, mesh);
-                    }
-                    const mesh = this.powerupMeshes.get(key);
-                    const pulse = Math.sin(time * 0.0025 + (pu.phase || 0)) * 5;
-                    mesh.position.set(pu.x, 20 + pulse, pu.y);
-                    mesh.rotation.y = time * 0.002;
-                    mesh.visible = true;
-                }
-                for (const [key, mesh] of this.powerupMeshes) {
-                    if (!seen.has(key)) {
-                        this.scene.remove(mesh);
-                        mesh.geometry?.dispose();
-                        mesh.material?.dispose();
-                        this.powerupMeshes.delete(key);
-                    }
-                }
-            }
-
-            updateGlow(center, time) {
-                if (center && center.mass > 0) {
-                    const r = Math.sqrt(center.mass) * 0.9;
-                    this.playerGlow.visible = true;
-                    this.playerGlow.position.set(center.x, 5, center.y);
-                    this.playerGlow.scale.setScalar(r);
-                    this.playerGlow.material.opacity = 0.2 + Math.sin(time * 0.003) * 0.1;
-                } else {
-                    this.playerGlow.visible = false;
-                }
-            }
-
-            resize(w, h) {
-                this.camera.aspect = w / h;
-                this.camera.updateProjectionMatrix();
-                this.renderer.setSize(w, h);
-            }
-
-            show() {
-                this.container.style.display = "block";
-                this.resize(window.innerWidth, window.innerHeight);
-            }
-
-            hide() {
-                this.container.style.display = "none";
-            }
-
-            dispose() {
-                this.disposed = true;
-                if (this._onResize) window.removeEventListener("resize", this._onResize);
-                this.container.style.display = "none";
-                for (const [, mesh] of this.cellMeshes) { this.scene.remove(mesh); mesh.geometry?.dispose(); mesh.material?.dispose(); }
-                this.cellMeshes.clear();
-                for (const mesh of this.virusInstances) { this.scene.remove(mesh); mesh.geometry?.dispose(); mesh.material?.dispose(); }
-                this.virusInstances = [];
-                for (const [, mesh] of this.powerupMeshes) { this.scene.remove(mesh); mesh.geometry?.dispose(); mesh.material?.dispose(); }
-                this.powerupMeshes.clear();
-                if (this.foodInstance) { this.scene.remove(this.foodInstance); this.foodInstance.geometry.dispose(); this.foodInstance.material.dispose(); this.foodInstance = null; }
-                if (this.playerGlow) { this.scene.remove(this.playerGlow); this.playerGlow.geometry.dispose(); this.playerGlow.material.dispose(); }
-                this.renderer.dispose();
-                this.container.innerHTML = "";
-            }
-        }
-
+        // 3D rendering lives in src/render/neon-three-renderer.js.
         function bootGame() {
-            if (!window.Phaser) {
+            if (!Phaser) {
                 showFatalLoadError("Phaser 加载失败，请检查网络或刷新页面重试。");
                 return;
             }
