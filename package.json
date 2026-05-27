@@ -1,0 +1,16 @@
+{
+  "name": "qiuqiu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A browser-based ball eating game with LAN multiplayer support.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
