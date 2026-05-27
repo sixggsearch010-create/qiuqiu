@@ -5453,6 +5453,7 @@
                 const rows = this.getLeaderboardRows();
                 const playerMass = this.getOwnerMass(this.localPlayerId);
                 const playerCells = this.getPlayerCells();
+                const playerCenter = this.getPlayerCenter();
                 const playerRadius = playerCells.length
                     ? Math.max(...playerCells.map(cell => radiusFromMass(cell.mass)))
                     : 0;
