@@ -7,6 +7,7 @@ const os = require("os");
 
 const PORT = parseInt(process.argv[2], 10) || 8080;
 const MAX_CLIENTS = 4;
+const MAX_NAME_LENGTH = 12;
 
 const wss = new WebSocket.Server({ port: PORT });
 
@@ -16,12 +17,27 @@ let nextClientId = 1;
 
 function getLanIp() {
     const interfaces = os.networkInterfaces();
+    let fallback = "127.0.0.1";
     for (const name of Object.keys(interfaces)) {
         for (const iface of interfaces[name]) {
-            if (iface.family === "IPv4" && !iface.internal) return iface.address;
+            if (iface.family !== "IPv4" || iface.internal) continue;
+            if (!iface.address.startsWith("169.254.")) fallback = iface.address;
+            if (
+                iface.address.startsWith("192.168.") ||
+                iface.address.startsWith("10.") ||
+                /^172\.(1[6-9]|2\d|3[0-1])\./.test(iface.address)
+            ) {
+                return iface.address;
+            }
         }
     }
-    return "127.0.0.1";
+    return fallback;
+}
+
+function normalizeName(value, fallback) {
+    if (typeof value !== "string") return fallback;
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, MAX_NAME_LENGTH) : fallback;
 }
 
 function broadcast(data, excludeWs) {
@@ -34,7 +50,7 @@ function broadcast(data, excludeWs) {
 }
 
 function sendTo(ws, data) {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(typeof data === "string" ? data : JSON.stringify(data));
     }
 }
@@ -70,20 +86,26 @@ wss.on("connection", (ws) => {
         if (msg.type === "host") {
             if (hostWs && hostWs !== ws) {
                 sendTo(ws, { type: "error", message: "已有主机存在" });
+                ws.close();
                 return;
             }
             hostWs = ws;
             info.role = "host";
-            info.name = msg.name || "主机";
+            info.name = normalizeName(msg.name, "主机");
             console.log(`[主机] 客户端 #${clientId} 成为主机`);
-            sendTo(ws, { type: "hostRegistered", clientId, players: getPlayersList() });
+            sendTo(ws, { type: "hostRegistered", clientId, serverAddress: `${lanIp}:${PORT}`, players: getPlayersList() });
             broadcast({ type: "playersList", players: getPlayersList() });
             return;
         }
 
         // 客户端加入
         if (msg.type === "join") {
-            info.name = msg.name || ("玩家" + clientId);
+            if (!hostWs || hostWs.readyState !== WebSocket.OPEN) {
+                sendTo(ws, { type: "error", message: "房间还没有主机，请先创建房间" });
+                ws.close();
+                return;
+            }
+            info.name = normalizeName(msg.name, "玩家" + clientId);
             console.log(`[加入] ${info.name} (#${clientId}) 加入房间`);
             sendTo(ws, { type: "welcome", clientId, players: getPlayersList() });
             broadcast({ type: "playersList", players: getPlayersList() });
