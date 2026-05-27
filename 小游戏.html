@@ -2417,10 +2417,12 @@
                 });
                 this.input.keyboard.on("keydown-SHIFT", () => {
                     soundFx.unlock();
+                    if (this.netMode === "client") { this.sendActionToHost("boost"); return; }
                     this.activateBoost();
                 });
                 this.input.keyboard.on("keydown-F", () => {
                     soundFx.unlock();
+                    if (this.netMode === "client") { this.sendActionToHost("merge"); return; }
                     this.activateMerge();
                 });
                 this.input.on("pointerdown", pointer => this.handlePlayfieldPointerDown(pointer));
@@ -2438,8 +2440,14 @@
                     button.addEventListener("pointerdown", trigger);
                     button.addEventListener("click", trigger);
                 };
-                bindAction(dom.boostBtn, () => this.activateBoost());
-                bindAction(dom.mergeBtn, () => this.activateMerge());
+                bindAction(dom.boostBtn, () => {
+                    if (this.netMode === "client") this.sendActionToHost("boost");
+                    else this.activateBoost();
+                });
+                bindAction(dom.mergeBtn, () => {
+                    if (this.netMode === "client") this.sendActionToHost("merge");
+                    else this.activateMerge();
+                });
 
                 this.render();
                 const params = new URLSearchParams(window.location.search);
@@ -3783,7 +3791,11 @@
                 const active = new Set(this.cells);
                 for (const group of groups.values()) {
                     const isPlayerGroup = group.length > 0 && this.isLocalPlayer(group[0].owner);
-                    const forceMerge = isPlayerGroup && this.mergeRequested;
+                    const remoteState = group.length > 0 ? this.playerStates.get(group[0].owner) : null;
+                    if (remoteState?.mergeRequested && time >= remoteState.mergeRequestEnd) {
+                        remoteState.mergeRequested = false;
+                    }
+                    const forceMerge = isPlayerGroup ? this.mergeRequested : !!remoteState?.mergeRequested;
                     for (let i = 0; i < group.length; i++) {
                         for (let j = i + 1; j < group.length; j++) {
                             const a = group[i];
@@ -7149,7 +7161,7 @@
                 if (state.supplyDrops) this.supplyDrops = state.supplyDrops;
                 if (state.chaosZones) this.chaosZones = state.chaosZones;
                 if (state.virusSwarms) this.virusSwarms = state.virusSwarms;
-                this.invalidateFrameCache();
+                this.invalidateOwnerCache();
                 const center = this.getPlayerCenter();
                 this.cameraTarget.setPosition(center.x, center.y);
             }
@@ -7181,6 +7193,7 @@
                         if (now >= ps.boostCooldownEnd && !ps.boostActive) {
                             ps.boostActive = true;
                             ps.boostEnd = now + BOOST_DURATION_MS;
+                            ps.boostCooldownEnd = ps.boostEnd + BOOST_COOLDOWN_MS;
                         }
                     } else if (msg.action === "merge") {
                         ps.mergeRequested = true;
@@ -7243,8 +7256,10 @@
                 for (const [playerId, ps] of this.playerStates) {
                     if (playerId === this.localPlayerId || !ps.alive) continue;
                     const vec = ps.lastInput || { x: 0, y: 0 };
+                    if (ps.boostActive && time >= ps.boostEnd) ps.boostActive = false;
+                    const multiplier = ps.boostActive ? BOOST_MULTIPLIER : 1;
                     for (const cell of this.getOwnerCells(playerId)) {
-                        this.moveCell(cell, vec, dt, time, 1);
+                        this.moveCell(cell, vec, dt, time, multiplier);
                     }
                 }
             }
@@ -8034,7 +8049,6 @@
                         this.scene.remove(this.foodInstance);
                         this.foodInstance.geometry.dispose();
                         this.foodInstance.material.dispose();
-                        this.foodInstance.instanceColor?.dispose();
                     }
                     this.foodCount = Math.max(count, 100);
                     const geo = new THREE.SphereGeometry(1, 8, 6);
@@ -8174,7 +8188,7 @@
                 this.virusInstances = [];
                 for (const [, mesh] of this.powerupMeshes) { this.scene.remove(mesh); mesh.geometry?.dispose(); mesh.material?.dispose(); }
                 this.powerupMeshes.clear();
-                if (this.foodInstance) { this.scene.remove(this.foodInstance); this.foodInstance.geometry.dispose(); this.foodInstance.material.dispose(); this.foodInstance.instanceColor?.dispose(); this.foodInstance = null; }
+                if (this.foodInstance) { this.scene.remove(this.foodInstance); this.foodInstance.geometry.dispose(); this.foodInstance.material.dispose(); this.foodInstance = null; }
                 if (this.playerGlow) { this.scene.remove(this.playerGlow); this.playerGlow.geometry.dispose(); this.playerGlow.material.dispose(); }
                 this.renderer.dispose();
                 this.container.innerHTML = "";
@@ -8256,6 +8270,7 @@
         // === LAN Multiplayer Lobby ===
         let lobbyWs = null;
         let lobbyPlayers = [];
+        let lobbyClientId = null;
 
         function showLobbyStatus(msg) { if (dom.lobbyStatus) dom.lobbyStatus.textContent = msg; }
         function clearLobbyStatus() { if (dom.lobbyStatus) dom.lobbyStatus.textContent = ""; }
@@ -8295,6 +8310,7 @@
             dom.startScreen.classList.remove("hidden");
             closeLobbySocket(true);
             lobbyPlayers = [];
+            lobbyClientId = null;
         }
 
         function connectToServer(onMessage, address) {
@@ -8384,6 +8400,7 @@
                 const name = dom.playerNameInput.value.trim() || "玩家";
                 connectToServer((msg) => {
                     if (msg.type === "welcome") {
+                        lobbyClientId = msg.clientId;
                         dom.joinForm.classList.add("hidden");
                         dom.clientLobby.classList.remove("hidden");
                         lobbyPlayers = msg.players || [];
@@ -8398,7 +8415,7 @@
                         if (window.game && window.game.scene.scenes[0]) {
                             const scene = window.game.scene.scenes[0];
                             scene.netMode = "client";
-                            scene.localPlayerId = "player-" + (msg.playerId || 2);
+                            scene.localPlayerId = "player-" + (msg.playerId || lobbyClientId || 2);
                             scene.ws = lobbyWs;
                             scene.matchState = "playing";
                             scene.setupClientMode();
