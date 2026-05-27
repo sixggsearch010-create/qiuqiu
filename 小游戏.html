@@ -2262,6 +2262,12 @@
                 this.hotspots = [];
                 this.bounties = [];
                 this.powerups = [];
+                this.supplyDrops = [];
+                this.chaosZones = [];
+                this.virusSwarms = [];
+                this.nextSupplyDropAt = 0;
+                this.nextChaosZoneAt = 0;
+                this.nextVirusSwarmAt = 0;
                 this.aiPlayers = new Map();
                 this.graphics = null;
                 this.bgGraphics = null;
@@ -8256,11 +8262,20 @@
         function updatePlayerListUI(listEl, players) {
             if (!listEl) return;
             listEl.innerHTML = players.map(p => {
-                const color = PLAYER_COLORS[(p.id - 1) % PLAYER_COLORS.length];
+                const id = Number.isFinite(Number(p.id)) ? Math.max(1, Number(p.id)) : 1;
+                const color = PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length];
                 const hex = "#" + color.toString(16).padStart(6, "0");
                 const role = p.role === "host" ? " (主机)" : "";
-                return '<div style="padding:4px 0;color:' + hex + '">' + p.name + role + '</div>';
+                return '<div style="padding:4px 0;color:' + hex + '">' + escapeHtml(p.name || "玩家") + role + '</div>';
             }).join("");
+        }
+
+        function closeLobbySocket(silent = false) {
+            if (!lobbyWs) return;
+            const ws = lobbyWs;
+            lobbyWs = null;
+            ws._silentClose = silent;
+            ws.close();
         }
 
         function openLobby() {
@@ -8270,35 +8285,49 @@
             dom.joinForm.classList.add("hidden");
             dom.hostLobby.classList.add("hidden");
             dom.clientLobby.classList.add("hidden");
+            if (dom.hostAddressDisplay) dom.hostAddressDisplay.textContent = "";
             clearLobbyStatus();
         }
 
         function closeLobby() {
             dom.lobbyScreen.classList.add("hidden");
             dom.startScreen.classList.remove("hidden");
-            if (lobbyWs) { lobbyWs.close(); lobbyWs = null; }
+            closeLobbySocket(true);
             lobbyPlayers = [];
         }
 
-        function connectToServer(onMessage) {
-            const wsUrl = dom.hostAddress.value.trim() || "localhost:8080";
+        function connectToServer(onMessage, address) {
+            closeLobbySocket(true);
+            const wsUrl = (address || dom.hostAddress.value.trim() || ("localhost:" + NET_SERVER_PORT)).trim();
             const url = wsUrl.startsWith("ws://") ? wsUrl : "ws://" + wsUrl;
             showLobbyStatus("连接中...");
+            let ws;
             try {
-                lobbyWs = new WebSocket(url);
+                ws = new WebSocket(url);
             } catch (e) {
                 showLobbyStatus("连接失败: " + e.message);
                 return null;
             }
-            lobbyWs.onopen = () => { clearLobbyStatus(); };
-            lobbyWs.onmessage = (ev) => {
+            lobbyWs = ws;
+            let statusHandled = false;
+            ws.onopen = () => { clearLobbyStatus(); };
+            ws.onmessage = (ev) => {
                 let msg;
                 try { msg = JSON.parse(ev.data); } catch { return; }
+                if (msg.type === "error") statusHandled = true;
                 onMessage(msg);
             };
-            lobbyWs.onerror = () => { showLobbyStatus("连接失败，请检查地址"); };
-            lobbyWs.onclose = () => { showLobbyStatus("连接已断开"); };
-            return lobbyWs;
+            ws.onerror = () => {
+                statusHandled = true;
+                showLobbyStatus("连接失败，请检查地址");
+            };
+            ws.onclose = () => {
+                const isCurrentSocket = lobbyWs === ws;
+                if (isCurrentSocket) lobbyWs = null;
+                if (!isCurrentSocket || ws._silentClose || statusHandled) return;
+                showLobbyStatus("连接已断开");
+            };
+            return ws;
         }
 
         if (dom.multiBtn) {
@@ -8318,11 +8347,19 @@
                 dom.lobbyOptions.classList.add("hidden");
                 dom.hostLobby.classList.remove("hidden");
                 const ws = connectToServer((msg) => {
-                    if (msg.type === "hostRegistered" || msg.type === "playersList") {
+                    if (msg.type === "hostRegistered") {
                         lobbyPlayers = msg.players || [];
                         updatePlayerListUI(dom.playerList, lobbyPlayers);
+                        if (dom.hostAddressDisplay) {
+                            dom.hostAddressDisplay.textContent = "联机地址：" + (msg.serverAddress || ("localhost:" + NET_SERVER_PORT));
+                        }
+                    } else if (msg.type === "playersList") {
+                        lobbyPlayers = msg.players || [];
+                        updatePlayerListUI(dom.playerList, lobbyPlayers);
+                    } else if (msg.type === "error") {
+                        showLobbyStatus(msg.message);
                     }
-                });
+                }, "localhost:" + NET_SERVER_PORT);
                 if (ws) {
                     ws.addEventListener("open", () => {
                         ws.send(JSON.stringify({ type: "host", name: "主机" }));
