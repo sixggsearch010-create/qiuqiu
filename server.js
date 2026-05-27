@@ -119,6 +119,12 @@ wss.on("connection", (ws) => {
         if (ws === hostWs) {
             if (msg.type === "startGame") {
                 console.log("[开始] 主机开始游戏");
+                for (const [clientWs, clientInfo] of clients) {
+                    if (clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+                        sendTo(clientWs, { ...msg, playerId: clientInfo.id });
+                    }
+                }
+                return;
             }
             broadcast(msg, ws); // 广播给除主机外的所有人
             return;
