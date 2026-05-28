@@ -1956,12 +1956,12 @@
         function getBaseSpeedForMass(mass) {
             const x = Math.log10(Math.max(1, mass));
             const curve = [
-                [Math.log10(45), 222],
-                [Math.log10(100), 214],
-                [Math.log10(800), 172],
-                [Math.log10(2200), 150],
-                [Math.log10(5000), 130],
-                [Math.log10(9000), 118]
+                [Math.log10(45), 245],
+                [Math.log10(100), 236],
+                [Math.log10(800), 192],
+                [Math.log10(2200), 168],
+                [Math.log10(5000), 148],
+                [Math.log10(9000), 135]
             ];
             if (x <= curve[0][0]) return curve[0][1];
             for (let i = 1; i < curve.length; i++) {
@@ -2491,7 +2491,7 @@
                 this.graphics = this.add.graphics();
                 this.cameraTarget = this.add.zone(WORLD_SIZE / 2, WORLD_SIZE / 2, 10, 10);
                 this.cameras.main.setBounds(0, 0, WORLD_SIZE, WORLD_SIZE);
-                this.cameras.main.startFollow(this.cameraTarget, true, 0.12, 0.12);
+                this.cameras.main.startFollow(this.cameraTarget, true, 0.16, 0.16);
                 this.cameras.main.setZoom(0.84);
 
                 this.cursors = this.input.keyboard.createCursorKeys();
@@ -3035,8 +3035,8 @@
                     const dx = pointer.worldX - center.x;
                     const dy = pointer.worldY - center.y;
                     const vector = normalizeVector(dx, dy);
-                    if (vector.length > 10) {
-                        const amount = clamp((vector.length - 10) / 210, 0, 1);
+                    if (vector.length > 8) {
+                        const amount = clamp((vector.length - 8) / 150, 0, 1);
                         return { x: vector.x * amount, y: vector.y * amount };
                     }
                 }
@@ -3046,7 +3046,7 @@
             getMoveVector(dt = 0) {
                 const raw = this.getRawMoveVector();
                 const rawLength = Math.hypot(raw.x, raw.y);
-                const response = rawLength > 0.01 ? 15 : 18;
+                const response = rawLength > 0.01 ? 20 : 22;
                 const lerp = dt > 0 ? 1 - Math.exp(-response * dt) : 1;
                 this.smoothedMove.x = Phaser.Math.Linear(this.smoothedMove.x, raw.x, lerp);
                 this.smoothedMove.y = Phaser.Math.Linear(this.smoothedMove.y, raw.y, lerp);
@@ -3706,7 +3706,7 @@
                     const blend = cell.boostBlendUntil && time < cell.boostBlendUntil
                         ? clamp((cell.boostBlendUntil - time) / 260, 0, 1)
                         : 0;
-                    const response = clamp(11.8 - Math.log10(cell.mass + 10) * 1.65, 5.6, 9.6) * (1 - blend * 0.32);
+                    const response = clamp(13.5 - Math.log10(cell.mass + 10) * 1.65, 6.5, 11.0) * (1 - blend * 0.32);
                     const lerp = 1 - Math.exp(-response * dt);
                     cell.vx = Phaser.Math.Linear(cell.vx, input.x * baseSpeed * amount, lerp);
                     cell.vy = Phaser.Math.Linear(cell.vy, input.y * baseSpeed * amount, lerp);
@@ -5571,7 +5571,7 @@
                 const center = this.getPlayerCenter();
                 if (!center.mass) return;
                 const focus = this.getCameraFocusPoint(center);
-                const followLerp = 1 - Math.exp(-5.2 * dt);
+                const followLerp = 1 - Math.exp(-6.5 * dt);
                 this.cameraTarget.setPosition(
                     Phaser.Math.Linear(this.cameraTarget.x, focus.x, followLerp),
                     Phaser.Math.Linear(this.cameraTarget.y, focus.y, followLerp)
@@ -7273,7 +7273,7 @@
                 this.bgGraphics = this.add.graphics();
                 this.cameraTarget = this.add.zone(WORLD_SIZE / 2, WORLD_SIZE / 2, 10, 10);
                 this.cameras.main.setBounds(0, 0, WORLD_SIZE, WORLD_SIZE);
-                this.cameras.main.startFollow(this.cameraTarget, true, 0.15, 0.15);
+                this.cameras.main.startFollow(this.cameraTarget, true, 0.19, 0.19);
                 this.cameras.main.setZoom(0.84);
                 if (this.renderMode === "3d") {
                     if (threeDMode) { threeDMode.dispose(); threeDMode = null; }
